@@ -76,6 +76,8 @@ class FileOrganizer:
             response = self._get_ai_suggestion(current_path, file_content)
             if response:
                 self._execute_suggestion(response, original_path)
+            else:
+                print(f"No valid suggestions for {current_path}")
             if callback:
                 callback(f"Processed: {current_path}")
         else:
@@ -199,11 +201,11 @@ Explain your reasoning for each suggestion."""
             return self._process_ai_response(response, file_path)
         except Exception as e:
             print(f"Error getting AI suggestion for {file_path}: {str(e)}")
-            raise
+            return None
 
     def _process_ai_response(self, response, file_path):
-        if not response.choices or not response.choices[0].message:
-            print(f"Invalid response format for {file_path}")
+        if not response or not response.choices or not response.choices[0].message:
+            print(f"Invalid or empty response for {file_path}")
             return None
 
         message = response.choices[0].message
@@ -211,12 +213,13 @@ Explain your reasoning for each suggestion."""
         tool_calls = message.tool_calls
 
         print(f"AI reasoning for {file_path}:")
-        print(content)
+        print(content if content else "No content provided")
 
-        # Extract file description from AI reasoning
-        description_match = re.search(r"File description: (.+)", content)
-        if description_match:
-            self.file_descriptions[file_path] = description_match.group(1)
+        if content:
+            # Extract file description from AI reasoning
+            description_match = re.search(r"File description: (.+)", content)
+            if description_match:
+                self.file_descriptions[file_path] = description_match.group(1)
 
         if not tool_calls:
             print(f"No tool calls suggested for {file_path}")

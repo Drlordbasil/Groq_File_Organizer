@@ -1,0 +1,5 @@
+groq
+PyQt5
+scikit-learn
+numpy
+tenacity
