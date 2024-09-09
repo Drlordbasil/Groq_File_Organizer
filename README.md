@@ -1,4 +1,4 @@
-# AI File Organizer
+# AI File Organizer(can be unstable but is worked on, ask for help)
 
 AI File Organizer is a Python-based application that uses artificial intelligence to help organize your files and folders. It analyzes the content and structure of your files and suggests ways to organize them more effectively.
 
