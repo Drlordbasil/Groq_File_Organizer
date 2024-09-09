@@ -1,7 +1,7 @@
 import os
 import shutil
 from groq import Groq
-from tools.file_tools import move_file, create_folder, add_note, rename_file, delete_file
+from tools.file_tools import move_file, create_folder, add_note, rename_file, delete_file, add_tag
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -26,6 +26,8 @@ class FileOrganizer:
         self.dependencies = {}
         self.project_structure = {}
         mimetypes.init()
+        self.file_tags = {}
+        self.file_descriptions = {}
 
     def _is_processable_file(self, file_path):
         _, ext = os.path.splitext(file_path)
@@ -179,43 +181,70 @@ Important: Consider the following guidelines when making suggestions:
 3. Keep related files in the same directory.
 4. Suggest creating subdirectories only for logically separate components.
 5. Rename files if it improves clarity, but maintain consistency.
-6. Suggest deleting files only if they are clearly obsolete or redundant.
+6. Suggest moving files to a 'delete_these' folder instead of deleting them directly.
 7. Add notes to files to explain their purpose or suggest improvements.
 8. Consider the overall project architecture when making suggestions.
 9. For non-text files, focus on organizing based on filename and file type.
 
-Provide your suggestions using the available tools. You can use multiple tools if needed."""
+Provide your suggestions using the available tools. You can use multiple tools if needed.
+Explain your reasoning for each suggestion."""
 
         try:
             response = self.client.chat.completions.create(
                 model=self.config.TEXT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 tools=self.config.TOOLS,
-                max_tokens=500
+                max_tokens=1000
             )
-            return response
+            return self._process_ai_response(response, file_path)
         except Exception as e:
             print(f"Error getting AI suggestion for {file_path}: {str(e)}")
             raise
 
-    def _execute_suggestion(self, response, original_path):
-        if response is None or not hasattr(response.choices[0].message, 'tool_calls'):
-            print(f"No valid suggestions for {original_path}")
-            return
-        
-        tool_calls = response.choices[0].message.tool_calls
-        if not tool_calls:
-            print(f"No tool calls in response for {original_path}")
-            return
+    def _process_ai_response(self, response, file_path):
+        if not response.choices or not response.choices[0].message:
+            print(f"Invalid response format for {file_path}")
+            return None
 
+        message = response.choices[0].message
+        content = message.content
+        tool_calls = message.tool_calls
+
+        print(f"AI reasoning for {file_path}:")
+        print(content)
+
+        # Extract file description from AI reasoning
+        description_match = re.search(r"File description: (.+)", content)
+        if description_match:
+            self.file_descriptions[file_path] = description_match.group(1)
+
+        if not tool_calls:
+            print(f"No tool calls suggested for {file_path}")
+            return None
+
+        processed_suggestions = []
         for tool_call in tool_calls:
             function = tool_call.function
             tool_name = function.name
             try:
                 args = json.loads(function.arguments)
+                processed_suggestions.append({
+                    "tool": tool_name,
+                    "args": args
+                })
             except json.JSONDecodeError:
-                print(f"Invalid JSON in tool arguments for {original_path}")
-                continue
+                print(f"Invalid JSON in tool arguments for {file_path}")
+
+        return processed_suggestions
+
+    def _execute_suggestion(self, suggestions, original_path):
+        if not suggestions:
+            print(f"No valid suggestions for {original_path}")
+            return
+
+        for suggestion in suggestions:
+            tool_name = suggestion["tool"]
+            args = suggestion["args"]
 
             current_path = self.file_locations.get(original_path)
             if not current_path or not os.path.exists(current_path):
@@ -256,14 +285,28 @@ Provide your suggestions using the available tools. You can use multiple tools i
                         self.file_locations[original_path] = new_path
                         print(f"Renamed file: {current_path} -> {new_path}")
             elif tool_name == "delete_file":
+                delete_these_folder = os.path.join(self.config.ROOT_PATH, "delete_these")
+                create_folder(delete_these_folder)
+                delete_destination = os.path.join(delete_these_folder, os.path.basename(current_path))
                 if not os.path.isdir(current_path):
                     backup_path = self._create_backup(current_path)
                     if backup_path:
                         print(f"Created backup: {backup_path}")
-                if delete_file(current_path):
-                    self.changes.append(("delete", current_path, None))
-                    del self.file_locations[original_path]
-                    print(f"Deleted file: {current_path}")
+                new_path = move_file(current_path, delete_destination)
+                if new_path:
+                    self.changes.append(("move_to_delete", current_path, new_path))
+                    self.file_locations[original_path] = new_path
+                    print(f"Moved file to delete_these folder: {current_path} -> {new_path}")
+            elif tool_name == "add_tag":
+                tag = args.get('tag')
+                if tag:
+                    if add_tag(current_path, tag):
+                        if current_path not in self.file_tags:
+                            self.file_tags[current_path] = set()
+                        self.file_tags[current_path].add(tag)
+                        print(f"Added tag '{tag}' to {current_path}")
+                    else:
+                        print(f"Failed to add tag '{tag}' to {current_path}")
 
     def _is_safe_to_move(self, source, destination):
         source_dir = os.path.dirname(source)
@@ -282,7 +325,7 @@ Provide your suggestions using the available tools. You can use multiple tools i
     def undo_changes(self):
         for change in reversed(self.changes):
             action, source, destination = change
-            if action == "move" or action == "rename":
+            if action in ["move", "rename", "move_to_delete"]:
                 if os.path.exists(destination) and not os.path.exists(source):
                     try:
                         shutil.move(destination, source)
@@ -295,8 +338,6 @@ Provide your suggestions using the available tools. You can use multiple tools i
                         print(f"Error undoing {action} {destination} -> {source}: {str(e)}")
                 else:
                     print(f"Cannot undo {action}: {destination} -> {source}")
-            elif action == "delete":
-                print(f"Cannot undo delete action for: {source}")
         self.changes.clear()
 
     def _generate_report(self):
@@ -323,6 +364,21 @@ Provide your suggestions using the available tools. You can use multiple tools i
 
         return report
 
+    def _create_index_file(self):
+        index_path = os.path.join(self.config.ROOT_PATH, "index.txt")
+        with open(index_path, 'w', encoding='utf-8') as index_file:
+            index_file.write("File Organization Index\n")
+            index_file.write("=======================\n\n")
+            for file_path, current_path in self.file_locations.items():
+                rel_path = os.path.relpath(current_path, self.config.ROOT_PATH)
+                index_file.write(f"File: {rel_path}\n")
+                if file_path in self.file_descriptions:
+                    index_file.write(f"Description: {self.file_descriptions[file_path]}\n")
+                if file_path in self.file_tags:
+                    index_file.write(f"Tags: {', '.join(self.file_tags[file_path])}\n")
+                index_file.write("\n")
+        print(f"Created index file at {index_path}")
+
     def organize_folder(self, folder_path, callback=None):
         self.config.ROOT_PATH = folder_path
         self._analyze_dependencies(folder_path)
@@ -332,6 +388,7 @@ Provide your suggestions using the available tools. You can use multiple tools i
                 original_path = os.path.join(root, file)
                 self.file_locations[original_path] = original_path
                 self._process_file(original_path, callback)
+        self._create_index_file()
 
     def _analyze_dependencies(self, folder_path):
         for root, dirs, files in os.walk(folder_path):

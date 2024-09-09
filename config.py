@@ -79,5 +79,20 @@ class Config:
                         "required": ["file_path"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_tag",
+                    "description": "Add a tag to a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string"},
+                            "tag": {"type": "string"}
+                        },
+                        "required": ["file_path", "tag"]
+                    }
+                }
             }
         ]

@@ -70,3 +70,17 @@ def delete_file(file_path):
     except Exception as e:
         print(f"Error deleting file {file_path}: {str(e)}")
         return False
+
+def add_tag(file_path, tag):
+    try:
+        # This is a simple implementation. In a real-world scenario,
+        # you might want to use a more robust tagging system.
+        tag_file = file_path + ".tags"
+        mode = 'a' if os.path.exists(tag_file) else 'w'
+        with open(tag_file, mode) as f:
+            f.write(tag + '\n')
+        print(f"Successfully added tag '{tag}' to file: {file_path}")
+        return True
+    except Exception as e:
+        print(f"Error adding tag to file {file_path}: {str(e)}")
+        return False
