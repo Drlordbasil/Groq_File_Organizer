@@ -128,12 +128,22 @@ class FileOrganizer:
         return analysis
 
     def _create_backup(self, file_path):
-        backup_dir = os.path.join(os.path.dirname(file_path), '.file_organizer_backups')
-        os.makedirs(backup_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = os.path.join(backup_dir, f"{os.path.basename(file_path)}_{timestamp}")
-        shutil.copy2(file_path, backup_path)
-        return backup_path
+        if os.path.isdir(file_path):
+            print(f"Skipping backup for directory: {file_path}")
+            return None
+        try:
+            backup_dir = os.path.join(os.path.dirname(file_path), '.file_organizer_backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = os.path.join(backup_dir, f"{os.path.basename(file_path)}_{timestamp}")
+            shutil.copy2(file_path, backup_path)
+            return backup_path
+        except PermissionError:
+            print(f"Permission denied when creating backup for: {file_path}")
+            return None
+        except Exception as e:
+            print(f"Error creating backup for {file_path}: {str(e)}")
+            return None
 
     def _get_context(self, file_path):
         context = ""
@@ -215,8 +225,10 @@ Provide your suggestions using the available tools. You can use multiple tools i
             if tool_name == "move_file":
                 destination = os.path.join(self.config.ROOT_PATH, args.get('destination'))
                 if self._is_safe_to_move(current_path, destination):
-                    backup_path = self._create_backup(current_path)
-                    print(f"Created backup: {backup_path}")
+                    if not os.path.isdir(current_path):
+                        backup_path = self._create_backup(current_path)
+                        if backup_path:
+                            print(f"Created backup: {backup_path}")
                     new_path = move_file(current_path, destination)
                     if new_path:
                         self.changes.append(("move", current_path, new_path))
@@ -234,16 +246,20 @@ Provide your suggestions using the available tools. You can use multiple tools i
             elif tool_name == "rename_file":
                 new_name = args.get('new_name')
                 if new_name:
-                    backup_path = self._create_backup(current_path)
-                    print(f"Created backup: {backup_path}")
+                    if not os.path.isdir(current_path):
+                        backup_path = self._create_backup(current_path)
+                        if backup_path:
+                            print(f"Created backup: {backup_path}")
                     new_path = rename_file(current_path, new_name)
                     if new_path:
                         self.changes.append(("rename", current_path, new_path))
                         self.file_locations[original_path] = new_path
                         print(f"Renamed file: {current_path} -> {new_path}")
             elif tool_name == "delete_file":
-                backup_path = self._create_backup(current_path)
-                print(f"Created backup: {backup_path}")
+                if not os.path.isdir(current_path):
+                    backup_path = self._create_backup(current_path)
+                    if backup_path:
+                        print(f"Created backup: {backup_path}")
                 if delete_file(current_path):
                     self.changes.append(("delete", current_path, None))
                     del self.file_locations[original_path]
